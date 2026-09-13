@@ -17,7 +17,9 @@ from typing import Tuple, Union, List
 import numpy as np
 from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
 from skimage import io
-
+import PIL.Image
+# It is necessary to increase max pixels to load large images. In the future I could use more reasonable approach and split image based on background.
+PIL.Image.MAX_IMAGE_PIXELS = None
 
 class NaturalImage2DIO(BaseReaderWriter):
     """
