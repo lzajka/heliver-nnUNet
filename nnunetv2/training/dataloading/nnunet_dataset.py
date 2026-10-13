@@ -6,7 +6,9 @@ from typing import Optional, Sequence, Tuple
 
 import blosc2
 import numpy as np
-from batchgenerators.utilities.file_and_folder_operations import join, load_pickle, isfile, write_pickle, subfiles
+import zarr
+from batchgenerators.utilities.file_and_folder_operations import join, load_pickle, isfile, write_pickle
+from numcodecs import Blosc
 
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.training.dataloading.utils import unpack_dataset
@@ -472,18 +474,105 @@ class nnUNetDatasetBlosc2(nnUNetBaseDataset):
         pass
 
 
+class nnUNetDatasetZarr(nnUNetBaseDataset):
+    @staticmethod
+    def _get_compressor():
+        clevel = int(os.environ.get('NNUNET_ZARR_CLEVEL', 5))
+        cname = os.environ.get('NNUNET_ZARR_CNAME', 'zstd')
+        return Blosc(cname=cname, clevel=clevel, shuffle=Blosc.BITSHUFFLE)
+
+    @staticmethod
+    def _parse_chunks_override(ndim: int):
+        raw = os.environ.get('NNUNET_ZARR_CHUNKS', '').strip()
+        if raw == '':
+            return None
+        parts = [int(i.strip()) for i in raw.split(',') if i.strip() != '']
+        if len(parts) != ndim:
+            raise ValueError(f"NNUNET_ZARR_CHUNKS must define exactly {ndim} comma-separated integers, got {raw!r}")
+        return tuple(parts)
+
+    def load_case(self, identifier):
+        data = zarr.open(join(self.source_folder, identifier + '.zarr'), mode='r')
+        seg = zarr.open(join(self.source_folder, identifier + '_seg.zarr'), mode='r')
+
+        if self.folder_with_segs_from_previous_stage is not None:
+            seg_prev = zarr.open(join(self.folder_with_segs_from_previous_stage, identifier + '.zarr'), mode='r')
+        else:
+            seg_prev = None
+
+        properties = load_pickle(join(self.source_folder, identifier + '.pkl'))
+        return data, seg, seg_prev, properties
+
+    @staticmethod
+    def save_case(
+            data: np.ndarray,
+            seg: np.ndarray,
+            properties: dict,
+            output_filename_truncated: str,
+            chunks=None,
+            chunks_seg=None,
+    ):
+        chunks_override_data = nnUNetDatasetZarr._parse_chunks_override(data.ndim)
+        chunks_override_seg = nnUNetDatasetZarr._parse_chunks_override(seg.ndim)
+        chunks_data = chunks_override_data if chunks_override_data is not None else chunks
+        chunks_seg_final = chunks_override_seg if chunks_override_seg is not None else chunks_seg
+        if chunks_seg_final is None:
+            chunks_seg_final = chunks_data
+
+        compressor = nnUNetDatasetZarr._get_compressor()
+        z_data = zarr.open(output_filename_truncated + '.zarr', mode='w',
+                           shape=data.shape, dtype=data.dtype, chunks=chunks_data, compressor=compressor)
+        z_data[:] = np.ascontiguousarray(data)
+
+        z_seg = zarr.open(output_filename_truncated + '_seg.zarr', mode='w',
+                          shape=seg.shape, dtype=seg.dtype, chunks=chunks_seg_final, compressor=compressor)
+        z_seg[:] = np.ascontiguousarray(seg)
+
+        write_pickle(properties, output_filename_truncated + '.pkl')
+
+    @staticmethod
+    def save_seg(
+            seg: np.ndarray,
+            output_filename_truncated: str
+    ):
+        chunks_override = nnUNetDatasetZarr._parse_chunks_override(seg.ndim)
+        compressor = nnUNetDatasetZarr._get_compressor()
+        z_seg = zarr.open(output_filename_truncated + '.zarr', mode='w',
+                          shape=seg.shape, dtype=seg.dtype, chunks=chunks_override, compressor=compressor)
+        z_seg[:] = np.ascontiguousarray(seg)
+
+    @staticmethod
+    def get_identifiers(folder: str) -> List[str]:
+        case_identifiers = [i[:-5] for i in os.listdir(folder) if i.endswith(".zarr") and not i.endswith("_seg.zarr")]
+        return case_identifiers
+
+    @staticmethod
+    def unpack_dataset(folder: str, overwrite_existing: bool = False,
+                       num_processes: int = default_num_processes,
+                       verify: bool = True):
+        pass
+
+
 file_ending_dataset_mapping = {
     'npz': nnUNetDatasetNumpy,
-    'b2nd': nnUNetDatasetBlosc2
+    'b2nd': nnUNetDatasetBlosc2,
+    'zarr': nnUNetDatasetZarr
 }
 
 
-def infer_dataset_class(folder: str) -> Union[Type[nnUNetDatasetBlosc2], Type[nnUNetDatasetNumpy]]:
-    file_endings = set([os.path.basename(i).split('.')[-1] for i in subfiles(folder, join=False)])
+def infer_dataset_class(folder: str) -> Union[Type[nnUNetDatasetBlosc2], Type[nnUNetDatasetNumpy], Type[nnUNetDatasetZarr]]:
+    entries = os.listdir(folder)
+    file_endings = set()
+    for entry in entries:
+        if entry.endswith('.zarr'):
+            file_endings.add('zarr')
+        elif '.' in entry:
+            file_endings.add(entry.split('.')[-1])
     if 'pkl' in file_endings:
         file_endings.remove('pkl')
     if 'npy' in file_endings:
         file_endings.remove('npy')
+    file_endings = {i for i in file_endings if i in file_ending_dataset_mapping.keys()}
     assert len(file_endings) == 1, (f'Found more than one file ending in the folder {folder}. '
                                     f'Unable to infer nnUNetDataset variant!')
     return file_ending_dataset_mapping[list(file_endings)[0]]

@@ -27,6 +27,9 @@ The output is written into `nnUNet_preprocessed/DatasetXXX_Name`.
 - Use `--no_pbar` in non-interactive environments.
 - Use `-d 1 2 3` to process multiple datasets.
 - Use `-c 3d_fullres` if you already know which configuration you want.
+- For large PNG datasets, enable dask+zarr input handling with `--png_use_dask_zarr`.
+- To store preprocessed cases as compressed zarr instead of blosc2, use `--preprocessed_storage zarr`.
+- To override zarr chunks, use `--zarr_chunks` (for example `1,1,2048,2048` for `C,X,Y,Z` arrays).
 - Use `-h` to inspect all options.
 
 ## Split commands

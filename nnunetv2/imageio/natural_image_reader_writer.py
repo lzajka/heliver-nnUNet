@@ -14,10 +14,15 @@
 #    limitations under the License.
 
 from typing import Tuple, Union, List
+import os
 import numpy as np
+import dask.array as da
+import zarr
 from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
 from skimage import io
 import PIL.Image
+from dask import delayed
+from numcodecs import Blosc
 # It is necessary to increase max pixels to load large images. In the future I could use more reasonable approach and split image based on background.
 PIL.Image.MAX_IMAGE_PIXELS = None
 
@@ -35,10 +40,58 @@ class NaturalImage2DIO(BaseReaderWriter):
         '.tif'
     ]
 
+    @staticmethod
+    def _parse_png_chunk_shape(height: int, width: int, channels: int = None):
+        default_h = int(os.environ.get('NNUNET_PNG_ZARR_CHUNK_H', 1024))
+        default_w = int(os.environ.get('NNUNET_PNG_ZARR_CHUNK_W', 1024))
+        if channels is None:
+            return max(1, min(default_h, height)), max(1, min(default_w, width))
+        return max(1, min(default_h, height)), max(1, min(default_w, width)), channels
+
+    @staticmethod
+    def _png_compressor():
+        clevel = int(os.environ.get('NNUNET_PNG_ZARR_CLEVEL', os.environ.get('NNUNET_ZARR_CLEVEL', 5)))
+        cname = os.environ.get('NNUNET_PNG_ZARR_CNAME', os.environ.get('NNUNET_ZARR_CNAME', 'zstd'))
+        return Blosc(cname=cname, clevel=clevel, shuffle=Blosc.BITSHUFFLE)
+
+    @staticmethod
+    def _read_via_dask_and_zarr(fname: str):
+        with PIL.Image.open(fname) as img:
+            width, height = img.size
+            mode = img.mode
+        channels = len(mode) if mode in ('RGB', 'RGBA') else None
+        dtype = np.uint16 if mode.startswith('I;16') else np.uint8
+        delayed_img = delayed(io.imread)(fname)
+        delayed_shape = (height, width, channels) if channels is not None else (height, width)
+        raw = da.from_delayed(delayed_img, shape=delayed_shape, dtype=dtype)
+        if channels is not None:
+            chunks = NaturalImage2DIO._parse_png_chunk_shape(height, width, channels)
+        else:
+            chunks = NaturalImage2DIO._parse_png_chunk_shape(height, width, None)
+
+        raw = raw.rechunk(chunks)
+
+        cache_root = os.environ.get('NNUNET_PNG_ZARR_CACHE_DIR', None)
+        if cache_root:
+            os.makedirs(cache_root, exist_ok=True)
+            zarr_cache = os.path.join(cache_root, os.path.basename(fname) + '.zarr')
+            arr = zarr.open(
+                zarr_cache,
+                mode='w',
+                shape=tuple(int(i) for i in raw.shape),
+                chunks=chunks,
+                dtype=raw.dtype,
+                compressor=NaturalImage2DIO._png_compressor()
+            )
+            da.store(raw, arr, lock=False)
+            return np.asarray(arr)
+        return raw.compute()
+
     def read_images(self, image_fnames: Union[List[str], Tuple[str, ...]]) -> Tuple[np.ndarray, dict]:
         images = []
+        use_dask_zarr = os.environ.get('NNUNET_PNG_USE_DASK_ZARR', '0').lower() in ('1', 'true', 'yes', 'on')
         for f in image_fnames:
-            npy_img = io.imread(f)
+            npy_img = self._read_via_dask_and_zarr(f) if use_dask_zarr else io.imread(f)
             if npy_img.ndim == 3:
                 # rgb image, last dimension should be the color channel and the size of that channel should be 3
                 # (or 4 if we have alpha)

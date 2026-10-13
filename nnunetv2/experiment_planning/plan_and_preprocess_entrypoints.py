@@ -9,6 +9,29 @@ def _add_logging_args(parser):
                         help='Set this flag to disable the progress bar. Recommended for cluster/HPC environments.')
 
 
+def _add_png_zarr_args(parser):
+    parser.add_argument('--png_use_dask_zarr', required=False, action='store_true', default=False,
+                        help='Enable dask+zarr-backed PNG loading.')
+    parser.add_argument('--png_zarr_cache_dir', type=str, required=False, default=None,
+                        help='Optional directory for PNG zarr cache files.')
+    parser.add_argument('--zarr_chunks', type=str, required=False, default=None,
+                        help='Optional comma-separated zarr chunk shape override, for example 1,1,2048,2048.')
+    parser.add_argument('--preprocessed_storage', type=str, required=False, default='blosc2', choices=['blosc2', 'zarr'],
+                        help='Preprocessed training storage backend.')
+
+
+def _apply_runtime_storage_args(args):
+    import os
+    if args.png_use_dask_zarr:
+        os.environ['NNUNET_PNG_USE_DASK_ZARR'] = '1'
+    if args.png_zarr_cache_dir:
+        os.environ['NNUNET_PNG_ZARR_CACHE_DIR'] = args.png_zarr_cache_dir
+    if args.zarr_chunks:
+        os.environ['NNUNET_ZARR_CHUNKS'] = args.zarr_chunks
+    if args.preprocessed_storage:
+        os.environ['NNUNET_PREPROCESSED_STORAGE'] = args.preprocessed_storage
+
+
 def extract_fingerprint_entry():
     import argparse
     parser = argparse.ArgumentParser()
@@ -27,8 +50,10 @@ def extract_fingerprint_entry():
     parser.add_argument("--clean", required=False, default=False, action="store_true",
                         help='[OPTIONAL] Set this flag to overwrite existing fingerprints. If this flag is not set and a '
                              'fingerprint already exists, the fingerprint extractor will not run.')
+    _add_png_zarr_args(parser)
     _add_logging_args(parser)
     args, unrecognized_args = parser.parse_known_args()
+    _apply_runtime_storage_args(args)
     extract_fingerprints(args.d, args.fpe, args.np, args.verify_dataset_integrity, args.clean, args.verbose,
                          show_progress_bar=not args.no_pbar)
 
@@ -97,8 +122,10 @@ def preprocess_entry():
                              "RAM available. Image resampling takes up a lot of RAM. MONITOR RAM USAGE AND "
                              "DECREASE -np IF YOUR RAM FILLS UP TOO MUCH!. Default: 8 processes for 2d, 4 "
                              "for 3d_fullres, 8 for 3d_lowres and 4 for everything else")
+    _add_png_zarr_args(parser)
     _add_logging_args(parser)
     args, unrecognized_args = parser.parse_known_args()
+    _apply_runtime_storage_args(args)
     if args.np is None:
         default_np = {"2d": 8, "3d_fullres": 4, "3d_lowres": 8}
         np = [default_np[c] if c in default_np.keys() else 4 for c in args.c]
@@ -175,8 +202,10 @@ def plan_and_preprocess_entry():
                              "RAM available. Image resampling takes up a lot of RAM. MONITOR RAM USAGE AND "
                              "DECREASE -np IF YOUR RAM FILLS UP TOO MUCH!. Default: 8 processes for 2d, 4 "
                              "for 3d_fullres, 8 for 3d_lowres and 4 for everything else")
+    _add_png_zarr_args(parser)
     _add_logging_args(parser)
     args = parser.parse_args()
+    _apply_runtime_storage_args(args)
 
     # fingerprint extraction
     print("Fingerprint extraction...")
