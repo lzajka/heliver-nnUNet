@@ -12,6 +12,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 import multiprocessing
+import os
 import shutil
 from time import sleep
 from typing import Tuple
@@ -26,7 +27,7 @@ import nnunetv2
 from nnunetv2.paths import nnUNet_preprocessed, nnUNet_raw
 from nnunetv2.preprocessing.cropping.cropping import crop_to_nonzero
 from nnunetv2.preprocessing.resampling.default_resampling import compute_new_shape
-from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2, comp_blosc2_params
+from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2, nnUNetDatasetZarr, comp_blosc2_params
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
@@ -162,9 +163,14 @@ class DefaultPreprocessor(object):
             tuple(configuration_manager.patch_size),
             seg.itemsize)
 
-        nnUNetDatasetBlosc2.save_case(data, seg, properties, output_filename_truncated,
-                                      chunks=chunk_size_data, blocks=block_size_data,
-                                      chunks_seg=chunk_size_seg, blocks_seg=block_size_seg)
+        storage_backend = os.environ.get('NNUNET_PREPROCESSED_STORAGE', 'blosc2').strip().lower()
+        if storage_backend == 'zarr':
+            nnUNetDatasetZarr.save_case(data, seg, properties, output_filename_truncated,
+                                        chunks=chunk_size_data, chunks_seg=chunk_size_seg)
+        else:
+            nnUNetDatasetBlosc2.save_case(data, seg, properties, output_filename_truncated,
+                                          chunks=chunk_size_data, blocks=block_size_data,
+                                          chunks_seg=chunk_size_seg, blocks_seg=block_size_seg)
 
     @staticmethod
     def _sample_foreground_locations(

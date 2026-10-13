@@ -57,6 +57,9 @@ If you want to run inference directly from an exported or copied model folder:
 nnUNetv2_predict_from_modelfolder -i INPUT_FOLDER -o OUTPUT_FOLDER -m MODEL_FOLDER
 ```
 
+For very large PNG inputs, add `--png_use_dask_zarr`. You can also set `--zarr_chunks` and
+`--png_zarr_cache_dir` to control zarr chunking and cache location.
+
 ## Export and import your own trained model
 
 To move a trained model to another machine:

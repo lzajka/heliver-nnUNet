@@ -46,7 +46,10 @@ class nnUNetPredictor(object):
                  device: torch.device = torch.device('cuda'),
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
-                 allow_tqdm: bool = True):
+                 allow_tqdm: bool = True,
+                 png_use_dask_zarr: bool = False,
+                 zarr_chunks: Optional[str] = None,
+                 png_zarr_cache_dir: Optional[str] = None):
         self.verbose = verbose
         self.verbose_preprocessing = verbose_preprocessing
         self.allow_tqdm = allow_tqdm
@@ -57,6 +60,12 @@ class nnUNetPredictor(object):
         self.tile_step_size = tile_step_size
         self.use_gaussian = use_gaussian
         self.use_mirroring = use_mirroring
+        if png_use_dask_zarr:
+            os.environ['NNUNET_PNG_USE_DASK_ZARR'] = '1'
+        if zarr_chunks:
+            os.environ['NNUNET_ZARR_CHUNKS'] = zarr_chunks
+        if png_zarr_cache_dir:
+            os.environ['NNUNET_PNG_ZARR_CACHE_DIR'] = png_zarr_cache_dir
         if device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
         else:
@@ -860,6 +869,12 @@ def predict_entry_point_modelfolder():
     parser.add_argument('--not_on_device', action='store_true', required=False, default=False,
                         help="Set this flag to disable perform_everything_on_device. Recommended for large cases that "
                              "occupy more VRAM than available")
+    parser.add_argument('--png_use_dask_zarr', action='store_true', required=False, default=False,
+                        help='Enable dask+zarr-backed PNG loading for large images.')
+    parser.add_argument('--zarr_chunks', type=str, required=False, default=None,
+                        help='Optional comma-separated zarr chunk shape override (for example 1,1,2048,2048).')
+    parser.add_argument('--png_zarr_cache_dir', type=str, required=False, default=None,
+                        help='Optional directory for PNG zarr cache files.')
 
     print(
         "\n#######################################################################\nPlease cite the following paper "
@@ -896,7 +911,10 @@ def predict_entry_point_modelfolder():
                                 device=device,
                                 verbose=args.verbose,
                                 allow_tqdm=not args.disable_progress_bar,
-                                verbose_preprocessing=args.verbose)
+                                verbose_preprocessing=args.verbose,
+                                png_use_dask_zarr=args.png_use_dask_zarr,
+                                zarr_chunks=args.zarr_chunks,
+                                png_zarr_cache_dir=args.png_zarr_cache_dir)
     predictor.initialize_from_trained_model_folder(args.m, args.f, args.chk)
     predictor.predict_from_files(args.i, args.o, save_probabilities=args.save_probabilities,
                                  overwrite=not args.continue_prediction,
@@ -972,6 +990,12 @@ def predict_entry_point():
     parser.add_argument('--not_on_device', action='store_true', required=False, default=False,
                         help="Set this flag to disable perform_everything_on_device. Recommended for large cases that "
                              "occupy more VRAM than available")
+    parser.add_argument('--png_use_dask_zarr', action='store_true', required=False, default=False,
+                        help='Enable dask+zarr-backed PNG loading for large images.')
+    parser.add_argument('--zarr_chunks', type=str, required=False, default=None,
+                        help='Optional comma-separated zarr chunk shape override (for example 1,1,2048,2048).')
+    parser.add_argument('--png_zarr_cache_dir', type=str, required=False, default=None,
+                        help='Optional directory for PNG zarr cache files.')
 
     print(
         "\n#######################################################################\nPlease cite the following paper "
@@ -1013,7 +1037,10 @@ def predict_entry_point():
                                 device=device,
                                 verbose=args.verbose,
                                 verbose_preprocessing=args.verbose,
-                                allow_tqdm=not args.disable_progress_bar)
+                                allow_tqdm=not args.disable_progress_bar,
+                                png_use_dask_zarr=args.png_use_dask_zarr,
+                                zarr_chunks=args.zarr_chunks,
+                                png_zarr_cache_dir=args.png_zarr_cache_dir)
     predictor.initialize_from_trained_model_folder(
         model_folder,
         args.f,
